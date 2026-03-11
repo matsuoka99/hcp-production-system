@@ -6,3 +6,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.models.client_product import ClientProduct
 from app.models.product_stage import ProductStage
+from app.models.kit import Kit
+from app.models.order import Order
+from app.models.order_kit import OrderKit
+from app.models.order_stage_entry import OrderStageEntry

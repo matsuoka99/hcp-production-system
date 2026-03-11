@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import Integer, ForeignKey, UniqueConstraint, CheckConstraint
 from app.db.session import Base
 
@@ -9,6 +9,9 @@ class ProductStage(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False)
     stage_id: Mapped[int] = mapped_column(ForeignKey("stages.id"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    product = relationship("Product")
+    stage = relationship("Stage")
 
     __table_args__ = (
         UniqueConstraint("product_id", "stage_id", name="uq_product_stages_product_stage"),
