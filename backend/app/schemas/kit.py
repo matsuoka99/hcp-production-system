@@ -6,6 +6,7 @@ class KitCreate(BaseModel):
     product_id: int
     quantity: int = Field(gt=0)
     created_by_user_id: int
+    is_complete: bool
     description: str | None = None
 
 class KitRead(BaseModel):

@@ -10,6 +10,7 @@ from app.api.routes.kits import router as kits_router
 from app.api.routes.production import router as production_router
 from app.api.routes.roles import router as roles_router
 from app.api.routes.users import router as users_router
+from app.api.routes.order_kits import router as order_kits_router
 
 app = FastAPI()
 
@@ -22,6 +23,7 @@ app.include_router(kits_router)
 app.include_router(production_router)
 app.include_router(roles_router)
 app.include_router(users_router)
+app.include_router(order_kits_router)
 
 @app.get("/")
 def root():

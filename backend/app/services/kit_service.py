@@ -25,7 +25,7 @@ def create_kit(db: Session, kit_data: KitCreate) -> Kit:
         remaining_quantity=kit_data.quantity,
         created_by_user_id=kit_data.created_by_user_id,
         description=kit_data.description,
-        is_complete=False,
+        is_complete=kit_data.is_complete,
         is_active=True,
     )
 
