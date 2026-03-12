@@ -3,7 +3,6 @@ from datetime import datetime
 
 class KitCreate(BaseModel):
     name: str
-    client_id: int
     product_id: int
     quantity: int = Field(gt=0)
     created_by_user_id: int
@@ -12,7 +11,6 @@ class KitCreate(BaseModel):
 class KitRead(BaseModel):
     id: int
     name: str
-    client_id: int
     product_id: int
     quantity: int
     remaining_quantity: int

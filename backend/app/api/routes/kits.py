@@ -1,49 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
 from app.db.session import get_db
-from app.models.kit import Kit
-from app.models.client import Client
-from app.models.product import Product
-from app.models.user import User
 from app.schemas.kit import KitCreate, KitRead
+from app.services.kit_service import create_kit, list_kits
 
 router = APIRouter(prefix="/kits", tags=["kits"])
 
+
 @router.post("", response_model=KitRead)
-def create_kit(kit_data: KitCreate, db: Session = Depends(get_db)):
-    client = db.get(Client, kit_data.client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Cliente não encontrado.")
+def create_kit_endpoint(kit_data: KitCreate, db: Session = Depends(get_db)):
+    return create_kit(db, kit_data)
 
-    product = db.get(Product, kit_data.product_id)
-    if not product:
-        raise HTTPException(status_code=404, detail="Produto não encontrado.")
-
-    user = db.get(User, kit_data.created_by_user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuário criador não encontrado.")
-
-    kit = Kit(
-        name=kit_data.name,
-        client_id=kit_data.client_id,
-        product_id=kit_data.product_id,
-        quantity=kit_data.quantity,
-        remaining_quantity=kit_data.quantity,
-        created_by_user_id=kit_data.created_by_user_id,
-        description=kit_data.description,
-        is_complete=False,
-        is_active=True,
-    )
-
-    db.add(kit)
-    db.commit()
-    db.refresh(kit)
-
-    return kit
 
 @router.get("", response_model=list[KitRead])
-def list_kits(db: Session = Depends(get_db)):
-    kits = db.execute(select(Kit).order_by(Kit.id)).scalars().all()
-    return kits
+def list_kits_endpoint(db: Session = Depends(get_db)):
+    return list_kits(db)

@@ -11,7 +11,6 @@ class Kit(Base):
 
     name: Mapped[str] = mapped_column(String, nullable=False)
 
-    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False)
 
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -29,8 +28,6 @@ class Kit(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
-    client = relationship("Client")
     product = relationship("Product")
-    
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     closed_by_user = relationship("User", foreign_keys=[closed_by_user_id])
