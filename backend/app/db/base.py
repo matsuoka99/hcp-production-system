@@ -10,3 +10,4 @@ from app.models.kit import Kit
 from app.models.order import Order
 from app.models.order_kit import OrderKit
 from app.models.order_stage_entry import OrderStageEntry
+from app.models.order_progress import OrderProgress

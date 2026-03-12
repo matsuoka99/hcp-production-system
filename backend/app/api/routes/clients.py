@@ -1,35 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
 from app.db.session import get_db
-from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientRead
+from app.services.client_service import create_client, list_clients
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
+
 @router.post("", response_model=ClientRead)
-def create_client(client_data: ClientCreate, db: Session = Depends(get_db)):
-    existing_client = db.execute(
-        select(Client).where(Client.cnpj == client_data.cnpj)
-    ).scalar_one_or_none()
+def create_client_endpoint(client_data: ClientCreate, db: Session = Depends(get_db)):
+    return create_client(db, client_data)
 
-    if existing_client:
-        raise HTTPException(status_code=400, detail="CNPJ já cadastrado.")
-
-    client = Client(
-        name=client_data.name,
-        cnpj=client_data.cnpj,
-        is_active=True
-    )
-
-    db.add(client)
-    db.commit()
-    db.refresh(client)
-
-    return client
 
 @router.get("", response_model=list[ClientRead])
-def list_clients(db: Session = Depends(get_db)):
-    clients = db.execute(select(Client).order_by(Client.id)).scalars().all()
-    return clients
+def list_clients_endpoint(db: Session = Depends(get_db)):
+    return list_clients(db)

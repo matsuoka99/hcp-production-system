@@ -7,9 +7,11 @@ from app.models.order import Order
 from app.models.product_stage import ProductStage
 from app.models.user import User
 from app.schemas.production import ProductionEntryCreate
+from app.models.order_progress import OrderProgress
 
 
 def create_production_entry(db: Session, entry_data: ProductionEntryCreate) -> OrderStageEntry:
+
     order = db.get(Order, entry_data.order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Pedido não encontrado.")
@@ -38,6 +40,24 @@ def create_production_entry(db: Session, entry_data: ProductionEntryCreate) -> O
     )
 
     db.add(entry)
+
+    progress = db.execute(
+        select(OrderProgress).where(
+            OrderProgress.order_id == entry_data.order_id,
+            OrderProgress.product_stage_id == entry_data.product_stage_id,
+        )
+    ).scalar_one_or_none()
+
+    if progress:
+        progress.quantity_completed += entry_data.quantity
+    else:
+        progress = OrderProgress(
+            order_id=entry_data.order_id,
+            product_stage_id=entry_data.product_stage_id,
+            quantity_completed=entry_data.quantity,
+        )
+        db.add(progress)
+
     db.commit()
     db.refresh(entry)
 
