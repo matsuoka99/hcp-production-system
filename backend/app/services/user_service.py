@@ -1,27 +1,74 @@
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
+from passlib.context import CryptContext
 
 from app.models.user import User
 from app.models.role import Role
-from app.schemas.user import UserCreate
+from app.schemas.user import UserCreate, UserUpdate
+from app.utils.permissions import (
+    get_user_with_role,
+    require_minimum_role,
+)
+from app.utils.patch import apply_patch
 
 
-def create_user(db: Session, user_data: UserCreate) -> User:
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, password_hash: str) -> bool:
+    return pwd_context.verify(plain_password, password_hash)
+
+
+def get_users(db: Session, is_active: bool | None = None):
+    stmt = select(User).order_by(User.id)
+
+    if is_active is not None:
+        stmt = stmt.where(User.is_active == is_active)
+
+    return db.execute(stmt).scalars().all()
+
+
+def get_user_by_id(db: Session, user_id: int):
+    user = db.get(User, user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuário não encontrado."
+        )
+
+    return user
+
+
+def create_user(db: Session, user_data: UserCreate, acting_user_id: int):
+    # Apenas supervisor+ pode criar usuários
+    require_minimum_role(db, acting_user_id, "supervisor")
+
     existing_user = db.execute(
         select(User).where(User.username == user_data.username)
     ).scalar_one_or_none()
 
     if existing_user:
-        raise HTTPException(status_code=400, detail="Usuário já cadastrado.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nome de usuário já existe."
+        )
 
     role = db.get(Role, user_data.role_id)
     if not role:
-        raise HTTPException(status_code=404, detail="Role não encontrada.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role não encontrada."
+        )
 
     user = User(
         username=user_data.username,
-        password_hash=user_data.password_hash,
+        password_hash=hash_password(user_data.password),
         role_id=user_data.role_id,
         is_active=True,
     )
@@ -33,6 +80,183 @@ def create_user(db: Session, user_data: UserCreate) -> User:
     return user
 
 
-def list_users(db: Session) -> list[User]:
-    users = db.execute(select(User).order_by(User.id)).scalars().all()
-    return users
+def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id: int):
+    target_user = db.get(User, user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuário não encontrado."
+        )
+
+    acting_user = get_user_with_role(db, acting_user_id)
+    target_user_with_role = get_user_with_role(db, user_id)
+
+    update_data = user_data.model_dump(exclude_unset=True)
+
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nenhum campo enviado para atualização."
+        )
+
+    # ---------------------------
+    # Caso 1: usuário alterando a si mesmo
+    # Permitido: apenas troca segura de senha
+    # Campos obrigatórios: current_password e new_password
+    # ---------------------------
+    if acting_user.id == target_user.id:
+        allowed_fields = {"current_password", "new_password"}
+
+        invalid_fields = set(update_data.keys()) - allowed_fields
+        if invalid_fields:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Você só pode alterar sua própria senha."
+            )
+
+        if "current_password" not in update_data or "new_password" not in update_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Para alterar sua senha, informe senha atual e a nova senha."
+            )
+
+        if not verify_password(update_data["current_password"], target_user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Senha atual incorreta."
+            )
+
+        target_user.password_hash = hash_password(update_data["new_password"])
+        db.commit()
+        db.refresh(target_user)
+        return target_user
+
+    # ---------------------------
+    # Caso 2: master pode alterar tudo
+    # ---------------------------
+    if acting_user.role.name == "master":
+        if "username" in update_data:
+            existing_user = db.execute(
+                select(User).where(
+                    User.username == update_data["username"],
+                    User.id != target_user.id,
+                )
+            ).scalar_one_or_none()
+
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Nome de usuário já existe."
+                )
+
+        if "role_id" in update_data:
+            role = db.get(Role, update_data["role_id"])
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Role não encontrada."
+                )
+
+        if "new_password" in update_data:
+            update_data["password_hash"] = hash_password(update_data.pop("new_password"))
+
+        # current_password não faz sentido quando outro usuário está alterando a conta
+        update_data.pop("current_password", None)
+
+        apply_patch(target_user, update_data)
+        db.commit()
+        db.refresh(target_user)
+        return target_user
+
+    # ---------------------------
+    # Caso 3: supervisor+ pode alterar apenas usuários operator
+    # Permitido: username e new_password
+    # current_password, se enviado, será ignorado
+    # ---------------------------
+    require_minimum_role(db, acting_user_id, "supervisor")
+
+    if target_user_with_role.role.name != "operator":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Supervisor+ só pode alterar usuários operator."
+        )
+
+    # current_password não é necessário quando um supervisor altera outro usuário
+    update_data.pop("current_password", None)
+
+    allowed_fields = {"username", "new_password"}
+    invalid_fields = set(update_data.keys()) - allowed_fields
+
+    if invalid_fields:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Supervisor+ só pode alterar nome de usuário e senha de operators."
+        )
+
+    if "username" not in update_data and "new_password" not in update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Informe username ou new_password para atualização."
+        )
+
+    if "username" in update_data:
+        existing_user = db.execute(
+            select(User).where(
+                User.username == update_data["username"],
+                User.id != target_user.id,
+            )
+        ).scalar_one_or_none()
+
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Nome de usuário já existe."
+            )
+
+        target_user.username = update_data["username"]
+
+    if "new_password" in update_data:
+        target_user.password_hash = hash_password(update_data["new_password"])
+
+    db.commit()
+    db.refresh(target_user)
+    return target_user
+
+
+def delete_user(db: Session, user_id: int, acting_user_id: int):
+    target_user = db.get(User, user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuário não encontrado."
+        )
+
+    if not target_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Usuário já está inativo."
+        )
+
+    acting_user = get_user_with_role(db, acting_user_id)
+    target_user_with_role = get_user_with_role(db, user_id)
+
+    # Master pode desativar qualquer usuário
+    if acting_user.role.name == "master":
+        target_user.is_active = False
+        db.commit()
+        db.refresh(target_user)
+        return target_user
+
+    # Supervisor+ pode desativar apenas operators
+    require_minimum_role(db, acting_user_id, "supervisor")
+
+    if target_user_with_role.role.name != "operator":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Supervisor+ só pode excluir usuários operator."
+        )
+
+    target_user.is_active = False
+    db.commit()
+    db.refresh(target_user)
+    return target_user

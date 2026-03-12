@@ -5,13 +5,6 @@ from sqlalchemy import select
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientRead
 
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import select
-
-from app.models.client import Client
-from app.schemas.client import ClientCreate
-
 
 def create_client(db: Session, client_data: ClientCreate) -> Client:
     existing_client = db.execute(
