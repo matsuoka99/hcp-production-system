@@ -18,10 +18,18 @@ router = APIRouter(prefix="/clients", tags=["clients"])
 @router.get("", response_model=list[ClientRead])
 def get_clients_route(
     is_active: bool | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
-    return get_clients(db, is_active=is_active)
-
+    return get_clients(
+        db,
+        is_active=is_active,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
 
 @router.post("", response_model=ClientRead)
 def create_client_route(
