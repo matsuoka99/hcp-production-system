@@ -9,6 +9,7 @@ from app.schemas.user import UserCreate, UserUpdate
 from app.utils.permissions import (
     get_user_with_role,
     require_minimum_role,
+    require_assignable_role,
 )
 from app.utils.patch import apply_patch
 
@@ -59,12 +60,8 @@ def create_user(db: Session, user_data: UserCreate, acting_user_id: int):
             detail="Nome de usuário já existe."
         )
 
-    role = db.get(Role, user_data.role_id)
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role não encontrada."
-        )
+    # Valida se o usuário logado pode atribuir a role solicitada
+    require_assignable_role(db, acting_user_id, user_data.role_id)
 
     user = User(
         username=user_data.username,
@@ -150,12 +147,7 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
                 )
 
         if "role_id" in update_data:
-            role = db.get(Role, update_data["role_id"])
-            if not role:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Role não encontrada."
-                )
+            require_assignable_role(db, acting_user_id, update_data["role_id"])
 
         if "new_password" in update_data:
             update_data["password_hash"] = hash_password(update_data.pop("new_password"))
