@@ -8,11 +8,22 @@ from app.utils.permissions import require_minimum_role
 from app.utils.patch import apply_patch
 
 
-def get_stages(db: Session, is_active: bool | None = None):
-    stmt = select(Stage).order_by(Stage.id)
+def get_stages(
+    db: Session,
+    is_active: bool | None = None,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    stmt = select(Stage)
 
     if is_active is not None:
         stmt = stmt.where(Stage.is_active == is_active)
+
+    if search:
+        stmt = stmt.where(Stage.name.ilike(f"%{search}%"))
+
+    stmt = stmt.order_by(Stage.id).limit(limit).offset(offset)
 
     return db.execute(stmt).scalars().all()
 
@@ -109,6 +120,7 @@ def delete_stage(db: Session, stage_id: int, acting_user_id: int):
     db.refresh(stage)
 
     return stage
+
 
 def get_stage_by_id(db: Session, stage_id: int):
     stage = db.get(Stage, stage_id)

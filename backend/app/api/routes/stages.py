@@ -11,7 +11,6 @@ from app.services.stage_service import (
     update_stage,
 )
 
-
 router = APIRouter(prefix="/stages", tags=["stages"])
 
 
@@ -27,9 +26,18 @@ def create_stage_route(
 @router.get("", response_model=list[StageRead])
 def get_stages_route(
     is_active: bool | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
-    return get_stages(db, is_active=is_active)
+    return get_stages(
+        db,
+        is_active=is_active,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.patch("/{stage_id}", response_model=StageRead)
@@ -49,6 +57,7 @@ def delete_stage_route(
     db: Session = Depends(get_db),
 ):
     return delete_stage(db, stage_id, acting_user_id)
+
 
 @router.get("/{stage_id}", response_model=StageRead)
 def get_stage_by_id_route(
