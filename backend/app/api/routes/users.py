@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.schemas.role import RoleRead
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.services.user_service import (
     create_user,
     delete_user,
+    get_assignable_roles,
     get_user_by_id,
     get_users,
     update_user,
@@ -13,15 +15,6 @@ from app.services.user_service import (
 
 
 router = APIRouter(prefix="/users", tags=["users"])
-
-
-@router.post("", response_model=UserRead)
-def create_user_route(
-    user_data: UserCreate,
-    acting_user_id: int = Query(...),
-    db: Session = Depends(get_db),
-):
-    return create_user(db, user_data, acting_user_id)
 
 
 @router.get("", response_model=list[UserRead])
@@ -32,12 +25,29 @@ def get_users_route(
     return get_users(db, is_active=is_active)
 
 
+@router.get("/assignable-roles", response_model=list[RoleRead])
+def get_assignable_roles_route(
+    acting_user_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    return get_assignable_roles(db, acting_user_id)
+
+
 @router.get("/{user_id}", response_model=UserRead)
 def get_user_by_id_route(
     user_id: int,
     db: Session = Depends(get_db),
 ):
     return get_user_by_id(db, user_id)
+
+
+@router.post("", response_model=UserRead)
+def create_user_route(
+    user_data: UserCreate,
+    acting_user_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    return create_user(db, user_data, acting_user_id)
 
 
 @router.patch("/{user_id}", response_model=UserRead)

@@ -46,6 +46,24 @@ def get_user_by_id(db: Session, user_id: int):
     return user
 
 
+def get_assignable_roles(db: Session, acting_user_id: int):
+    """
+    Retorna as roles que o usuário logado pode atribuir a outro usuário.
+    """
+    acting_user = get_user_with_role(db, acting_user_id)
+
+    stmt = select(Role).order_by(Role.level)
+
+    # Master pode atribuir qualquer role
+    if acting_user.role.code == "master":
+        return db.execute(stmt).scalars().all()
+
+    # Regra geral: só pode atribuir roles inferiores à própria
+    stmt = stmt.where(Role.level < acting_user.role.level)
+
+    return db.execute(stmt).scalars().all()
+
+
 def create_user(db: Session, user_data: UserCreate, acting_user_id: int):
     # Apenas supervisor+ pode criar usuários
     require_minimum_role(db, acting_user_id, "supervisor")
@@ -79,6 +97,7 @@ def create_user(db: Session, user_data: UserCreate, acting_user_id: int):
 
 def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id: int):
     target_user = db.get(User, user_id)
+
     if not target_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -99,7 +118,6 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
     # ---------------------------
     # Caso 1: usuário alterando a si mesmo
     # Permitido: apenas troca segura de senha
-    # Campos obrigatórios: current_password e new_password
     # ---------------------------
     if acting_user.id == target_user.id:
         allowed_fields = {"current_password", "new_password"}
@@ -114,7 +132,7 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
         if "current_password" not in update_data or "new_password" not in update_data:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Para alterar sua senha, informe senha atual e a nova senha."
+                detail="Para alterar sua senha, informe current_password e new_password."
             )
 
         if not verify_password(update_data["current_password"], target_user.password_hash):
@@ -131,7 +149,7 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
     # ---------------------------
     # Caso 2: master pode alterar tudo
     # ---------------------------
-    if acting_user.role.name == "master":
+    if acting_user.role.code == "master":
         if "username" in update_data:
             existing_user = db.execute(
                 select(User).where(
@@ -163,11 +181,10 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
     # ---------------------------
     # Caso 3: supervisor+ pode alterar apenas usuários operator
     # Permitido: username e new_password
-    # current_password, se enviado, será ignorado
     # ---------------------------
     require_minimum_role(db, acting_user_id, "supervisor")
 
-    if target_user_with_role.role.name != "operator":
+    if target_user_with_role.role.code != "operator":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Supervisor+ só pode alterar usuários operator."
@@ -217,6 +234,7 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
 
 def delete_user(db: Session, user_id: int, acting_user_id: int):
     target_user = db.get(User, user_id)
+
     if not target_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -233,7 +251,7 @@ def delete_user(db: Session, user_id: int, acting_user_id: int):
     target_user_with_role = get_user_with_role(db, user_id)
 
     # Master pode desativar qualquer usuário
-    if acting_user.role.name == "master":
+    if acting_user.role.code == "master":
         target_user.is_active = False
         db.commit()
         db.refresh(target_user)
@@ -242,7 +260,7 @@ def delete_user(db: Session, user_id: int, acting_user_id: int):
     # Supervisor+ pode desativar apenas operators
     require_minimum_role(db, acting_user_id, "supervisor")
 
-    if target_user_with_role.role.name != "operator":
+    if target_user_with_role.role.code != "operator":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Supervisor+ só pode excluir usuários operator."
