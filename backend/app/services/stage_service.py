@@ -109,3 +109,14 @@ def delete_stage(db: Session, stage_id: int, acting_user_id: int):
     db.refresh(stage)
 
     return stage
+
+def get_stage_by_id(db: Session, stage_id: int):
+    stage = db.get(Stage, stage_id)
+
+    if not stage:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Etapa não encontrada."
+        )
+
+    return stage

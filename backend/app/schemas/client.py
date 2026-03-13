@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 
 class ClientCreate(BaseModel):
@@ -13,6 +13,11 @@ class ClientRead(BaseModel):
     is_active: bool
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("cnpj")
+    def serialize_cnpj(self, cnpj: str):
+        from app.utils.cnpj import format_cnpj
+        return format_cnpj(cnpj)
 
 
 class ClientUpdate(BaseModel):

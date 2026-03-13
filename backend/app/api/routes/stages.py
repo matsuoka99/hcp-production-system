@@ -6,6 +6,7 @@ from app.schemas.stage import StageCreate, StageRead, StageUpdate
 from app.services.stage_service import (
     create_stage,
     delete_stage,
+    get_stage_by_id,
     get_stages,
     update_stage,
 )
@@ -48,3 +49,10 @@ def delete_stage_route(
     db: Session = Depends(get_db),
 ):
     return delete_stage(db, stage_id, acting_user_id)
+
+@router.get("/{stage_id}", response_model=StageRead)
+def get_stage_by_id_route(
+    stage_id: int,
+    db: Session = Depends(get_db),
+):
+    return get_stage_by_id(db, stage_id)

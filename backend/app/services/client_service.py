@@ -6,6 +6,7 @@ from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientUpdate
 from app.utils.permissions import require_minimum_role
 from app.utils.patch import apply_patch
+from app.utils.cnpj import validate_cnpj_digits
 
 
 def get_clients(db: Session, is_active: bool | None = None):
@@ -33,6 +34,8 @@ def create_client(db: Session, client_data: ClientCreate, acting_user_id: int):
     # Apenas supervisor+ pode criar clientes
     require_minimum_role(db, acting_user_id, "supervisor")
 
+    normalized_cnpj = validate_cnpj_digits(client_data.cnpj)
+
     existing_client_by_name = db.execute(
         select(Client).where(Client.name == client_data.name)
     ).scalar_one_or_none()
@@ -44,7 +47,7 @@ def create_client(db: Session, client_data: ClientCreate, acting_user_id: int):
         )
 
     existing_client_by_cnpj = db.execute(
-        select(Client).where(Client.cnpj == client_data.cnpj)
+        select(Client).where(Client.cnpj == normalized_cnpj)
     ).scalar_one_or_none()
 
     if existing_client_by_cnpj:
@@ -55,7 +58,7 @@ def create_client(db: Session, client_data: ClientCreate, acting_user_id: int):
 
     client = Client(
         name=client_data.name,
-        cnpj=client_data.cnpj,
+        cnpj=normalized_cnpj,
         is_active=True,
     )
 
@@ -101,9 +104,11 @@ def update_client(db: Session, client_id: int, client_data: ClientUpdate, acting
             )
 
     if "cnpj" in update_data:
+        normalized_cnpj = validate_cnpj_digits(update_data["cnpj"])
+
         existing_client_by_cnpj = db.execute(
             select(Client).where(
-                Client.cnpj == update_data["cnpj"],
+                Client.cnpj == normalized_cnpj,
                 Client.id != client.id,
             )
         ).scalar_one_or_none()
@@ -113,6 +118,8 @@ def update_client(db: Session, client_id: int, client_data: ClientUpdate, acting
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cliente com este CNPJ já existe."
             )
+
+        update_data["cnpj"] = normalized_cnpj
 
     apply_patch(client, update_data)
 
