@@ -18,6 +18,7 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 def get_orders_route(
     is_active: bool | None = Query(default=None),
     search: str | None = Query(default=None),
+    allocation_status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -26,6 +27,7 @@ def get_orders_route(
         db,
         is_active=is_active,
         search=search,
+        allocation_status=allocation_status,
         limit=limit,
         offset=offset,
     )

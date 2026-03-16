@@ -27,4 +27,6 @@ class OrderRead(BaseModel):
     description: str | None
     is_active: bool
 
-    model_config = {"from_attributes": True}
+    allocated_quantity_total: int
+    remaining_to_allocate: int
+    is_fully_allocated: bool
