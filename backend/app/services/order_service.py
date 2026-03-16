@@ -1,16 +1,61 @@
-from fastapi import HTTPException, status
-from sqlalchemy import select, or_, func
-from sqlalchemy.orm import Session
-from sqlalchemy.sql import Select
+from datetime import datetime
 
-from app.models.order import Order
+from fastapi import HTTPException, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
 from app.models.client import Client
-from app.models.product import Product
 from app.models.client_product import ClientProduct
+from app.models.order import Order
 from app.models.order_kit import OrderKit
+from app.models.product import Product
 from app.schemas.order import OrderCreate, OrderUpdate
-from app.utils.permissions import require_minimum_role
 from app.utils.patch import apply_patch
+from app.utils.permissions import require_minimum_role
+
+
+def _build_order_response(
+    order: Order,
+    allocated_quantity_total: int,
+) -> dict:
+    """
+    Monta o payload padrão de resposta de pedidos,
+    incluindo campos derivados de alocação e finalização.
+    """
+    remaining_to_allocate = order.quantity - allocated_quantity_total
+
+    return {
+        "id": order.id,
+        "name": order.name,
+        "client_id": order.client_id,
+        "product_id": order.product_id,
+        "quantity": order.quantity,
+        "completed_quantity": order.completed_quantity,
+        "created_by_user_id": order.created_by_user_id,
+        "description": order.description,
+        "delivery_date": order.delivery_date,
+        "is_active": order.is_active,
+        "allocated_quantity_total": int(allocated_quantity_total or 0),
+        "remaining_to_allocate": int(remaining_to_allocate or 0),
+        "is_fully_allocated": (remaining_to_allocate or 0) <= 0,
+        "created_at": order.created_at,
+        "closed_at": order.closed_at,
+        "closed_by_user_id": order.closed_by_user_id,
+        "is_ready_to_finalize": order.is_active and order.completed_quantity >= order.quantity,
+    }
+
+
+def _get_allocated_quantity_total(db: Session, order_id: int) -> int:
+    """
+    Retorna a quantidade total alocada em kits para um pedido.
+    """
+    total = db.execute(
+        select(func.coalesce(func.sum(OrderKit.allocated_quantity), 0)).where(
+            OrderKit.order_id == order_id
+        )
+    ).scalar_one()
+
+    return int(total or 0)
 
 
 def get_orders(
@@ -18,6 +63,7 @@ def get_orders(
     is_active: bool | None = None,
     search: str | None = None,
     allocation_status: str | None = None,
+    ready_to_finalize: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -61,63 +107,49 @@ def get_orders(
             detail="allocation_status deve ser 'pending' ou 'complete'.",
         )
 
+    if ready_to_finalize is True:
+        stmt = stmt.having(
+            Order.is_active.is_(True),
+            Order.completed_quantity >= Order.quantity,
+        )
+    elif ready_to_finalize is False:
+        stmt = stmt.having(
+            or_(
+                Order.is_active.is_(False),
+                Order.completed_quantity < Order.quantity,
+            )
+        )
+
     stmt = stmt.order_by(Order.id).limit(limit).offset(offset)
 
     rows = db.execute(stmt).all()
 
     result = []
-    for order, allocated_quantity_total, remaining_to_allocate in rows:
+    for order, allocated_quantity_total, _remaining_to_allocate in rows:
         result.append(
-            {
-                "id": order.id,
-                "name": order.name,
-                "client_id": order.client_id,
-                "product_id": order.product_id,
-                "quantity": order.quantity,
-                "completed_quantity": order.completed_quantity,
-                "delivery_date": order.delivery_date,
-                "description": order.description,
-                "is_active": order.is_active,
-                "allocated_quantity_total": int(allocated_quantity_total or 0),
-                "remaining_to_allocate": int(remaining_to_allocate or 0),
-                "is_fully_allocated": (remaining_to_allocate or 0) <= 0,
-            }
+            _build_order_response(
+                order=order,
+                allocated_quantity_total=int(allocated_quantity_total or 0),
+            )
         )
 
     return result
 
 
 def get_order_by_id(db: Session, order_id: int):
-    allocated_total = db.execute(
-        select(func.coalesce(func.sum(OrderKit.allocated_quantity), 0)).where(
-            OrderKit.order_id == order_id
-        )
-    ).scalar_one()
-
     order = db.get(Order, order_id)
-
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Pedido não encontrado.",
         )
 
-    remaining_to_allocate = order.quantity - allocated_total
+    allocated_total = _get_allocated_quantity_total(db, order_id)
 
-    return {
-        "id": order.id,
-        "name": order.name,
-        "client_id": order.client_id,
-        "product_id": order.product_id,
-        "quantity": order.quantity,
-        "completed_quantity": order.completed_quantity,
-        "delivery_date": order.delivery_date,
-        "description": order.description,
-        "is_active": order.is_active,
-        "allocated_quantity_total": int(allocated_total or 0),
-        "remaining_to_allocate": int(remaining_to_allocate or 0),
-        "is_fully_allocated": (remaining_to_allocate or 0) <= 0,
-    }
+    return _build_order_response(
+        order=order,
+        allocated_quantity_total=allocated_total,
+    )
 
 
 def create_order(
@@ -165,6 +197,7 @@ def create_order(
 
     db.add(order)
 
+    # Garante o relacionamento client_products para consultas rápidas.
     existing_link = db.execute(
         select(ClientProduct).where(
             ClientProduct.client_id == data.client_id,
@@ -182,20 +215,10 @@ def create_order(
     db.commit()
     db.refresh(order)
 
-    return {
-        "id": order.id,
-        "name": order.name,
-        "client_id": order.client_id,
-        "product_id": order.product_id,
-        "quantity": order.quantity,
-        "completed_quantity": order.completed_quantity,
-        "delivery_date": order.delivery_date,
-        "description": order.description,
-        "is_active": order.is_active,
-        "allocated_quantity_total": 0,
-        "remaining_to_allocate": order.quantity,
-        "is_fully_allocated": False,
-    }
+    return _build_order_response(
+        order=order,
+        allocated_quantity_total=0,
+    )
 
 
 def update_order(
@@ -207,7 +230,6 @@ def update_order(
     require_minimum_role(db, acting_user_id, "supervisor")
 
     order = db.get(Order, order_id)
-
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -215,7 +237,6 @@ def update_order(
         )
 
     update_data = data.model_dump(exclude_unset=True)
-
     if not update_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -227,28 +248,12 @@ def update_order(
     db.commit()
     db.refresh(order)
 
-    allocated_total = db.execute(
-        select(func.coalesce(func.sum(OrderKit.allocated_quantity), 0)).where(
-            OrderKit.order_id == order.id
-        )
-    ).scalar_one()
+    allocated_total = _get_allocated_quantity_total(db, order.id)
 
-    remaining_to_allocate = order.quantity - allocated_total
-
-    return {
-        "id": order.id,
-        "name": order.name,
-        "client_id": order.client_id,
-        "product_id": order.product_id,
-        "quantity": order.quantity,
-        "completed_quantity": order.completed_quantity,
-        "delivery_date": order.delivery_date,
-        "description": order.description,
-        "is_active": order.is_active,
-        "allocated_quantity_total": int(allocated_total or 0),
-        "remaining_to_allocate": int(remaining_to_allocate or 0),
-        "is_fully_allocated": (remaining_to_allocate or 0) <= 0,
-    }
+    return _build_order_response(
+        order=order,
+        allocated_quantity_total=allocated_total,
+    )
 
 
 def delete_order(
@@ -259,7 +264,6 @@ def delete_order(
     require_minimum_role(db, acting_user_id, "supervisor")
 
     order = db.get(Order, order_id)
-
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -277,25 +281,54 @@ def delete_order(
     db.commit()
     db.refresh(order)
 
-    allocated_total = db.execute(
-        select(func.coalesce(func.sum(OrderKit.allocated_quantity), 0)).where(
-            OrderKit.order_id == order.id
+    allocated_total = _get_allocated_quantity_total(db, order.id)
+
+    return _build_order_response(
+        order=order,
+        allocated_quantity_total=allocated_total,
+    )
+
+
+def finalize_order(
+    db: Session,
+    order_id: int,
+    acting_user_id: int,
+):
+    """
+    Finaliza explicitamente um pedido.
+    Esta operação não é automática: depende de ação do usuário.
+    """
+    require_minimum_role(db, acting_user_id, "supervisor")
+
+    order = db.get(Order, order_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido não encontrado.",
         )
-    ).scalar_one()
 
-    remaining_to_allocate = order.quantity - allocated_total
+    if not order.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O pedido já está finalizado.",
+        )
 
-    return {
-        "id": order.id,
-        "name": order.name,
-        "client_id": order.client_id,
-        "product_id": order.product_id,
-        "quantity": order.quantity,
-        "completed_quantity": order.completed_quantity,
-        "delivery_date": order.delivery_date,
-        "description": order.description,
-        "is_active": order.is_active,
-        "allocated_quantity_total": int(allocated_total or 0),
-        "remaining_to_allocate": int(remaining_to_allocate or 0),
-        "is_fully_allocated": (remaining_to_allocate or 0) <= 0,
-    }
+    if order.completed_quantity < order.quantity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O pedido ainda não está pronto para finalização.",
+        )
+
+    order.is_active = False
+    order.closed_at = datetime.utcnow()
+    order.closed_by_user_id = acting_user_id
+
+    db.commit()
+    db.refresh(order)
+
+    allocated_total = _get_allocated_quantity_total(db, order.id)
+
+    return _build_order_response(
+        order=order,
+        allocated_quantity_total=allocated_total,
+    )
