@@ -2,7 +2,8 @@ from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+
 
 from app.models.client import Client
 from app.models.client_product import ClientProduct
@@ -10,6 +11,7 @@ from app.models.order import Order
 from app.models.order_kit import OrderKit
 from app.models.product import Product
 from app.schemas.order import OrderCreate, OrderUpdate
+from app.services.order_kit_service import unlink_order_kit_from_order_delete
 from app.utils.patch import apply_patch
 from app.utils.permissions import require_minimum_role
 
@@ -273,8 +275,19 @@ def delete_order(
     if not order.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Pedido já está inativo.",
+            detail="Não é possível excluir um pedido já finalizado ou inativo.",
         )
+
+    order_kits = (
+        db.query(OrderKit)
+        .options(joinedload(OrderKit.kit))
+        .filter(OrderKit.order_id == order.id)
+        .all()
+    )
+
+    for order_kit in order_kits:
+        unlink_order_kit_from_order_delete(order_kit)
+        db.delete(order_kit)
 
     order.is_active = False
 
@@ -287,7 +300,6 @@ def delete_order(
         order=order,
         allocated_quantity_total=allocated_total,
     )
-
 
 def finalize_order(
     db: Session,

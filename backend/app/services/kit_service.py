@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.kit import Kit
 from app.models.product import Product
+from app.models.order_kit import OrderKit
 from app.schemas.kit import KitCreate, KitUpdate
 from app.utils.patch import apply_patch
 from app.utils.permissions import require_minimum_role
@@ -160,7 +161,6 @@ def delete_kit(
     require_minimum_role(db, acting_user_id, "supervisor")
 
     kit = db.get(Kit, kit_id)
-
     if not kit:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -172,6 +172,24 @@ def delete_kit(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Kit já está inativo.",
         )
+
+    order_kits = (
+        db.query(OrderKit)
+        .options(joinedload(OrderKit.order))
+        .filter(OrderKit.kit_id == kit.id)
+        .all()
+    )
+
+    # Não permite excluir kit vinculado a pedido já finalizado/inativo.
+    for order_kit in order_kits:
+        if not order_kit.order.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Não é possível excluir um kit vinculado a pedido finalizado.",
+            )
+
+    for order_kit in order_kits:
+        db.delete(order_kit)
 
     kit.is_active = False
     kit.closed_at = datetime.utcnow()

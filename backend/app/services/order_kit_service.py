@@ -128,6 +128,28 @@ def _allocate_single_kit_if_possible(
     }
 
 
+
+def unlink_order_kit_from_order_delete(order_kit: OrderKit) -> None:
+    """
+    Desfaz uma alocação quando o cancelamento parte do pedido.
+
+    Regras:
+    - devolve a quantidade alocada ao kit
+    - reabre o kit se ele voltar a ter saldo disponível
+    - remove o vínculo em order_kits
+    """
+    kit = order_kit.kit
+
+    kit.remaining_quantity += order_kit.allocated_quantity
+
+    # Se o kit voltou a ter saldo disponível, ele pode voltar a ficar ativo.
+    if kit.remaining_quantity > 0:
+        kit.is_active = True
+        kit.closed_at = None
+        kit.closed_by_user_id = None
+
+
+
 def allocate_kit_to_order(
     db: Session,
     data: OrderKitCreate,
