@@ -199,3 +199,44 @@ def delete_kit(
     db.refresh(kit)
 
     return kit
+
+def get_orders_by_kit(
+    db: Session,
+    kit_id: int,
+):
+    """
+    Retorna todas as orders associadas a um kit específico.
+
+    Regras:
+    - retorna a quantidade alocada de cada vínculo
+    - inclui se o pedido está ativo ou não
+    """
+
+    kit = db.get(Kit, kit_id)
+    if not kit:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Kit não encontrado.",
+        )
+
+    order_kits = (
+        db.query(OrderKit)
+        .options(joinedload(OrderKit.order))
+        .filter(OrderKit.kit_id == kit.id)
+        .order_by(OrderKit.id.asc())
+        .all()
+    )
+
+    return {
+        "kit_id": kit.id,
+        "kit_name": kit.name,
+        "orders": [
+            {
+                "order_id": order_kit.order.id,
+                "order_name": order_kit.order.name,
+                "allocated_quantity": order_kit.allocated_quantity,
+                "order_is_active": order_kit.order.is_active,
+            }
+            for order_kit in order_kits
+        ],
+    }

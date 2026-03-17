@@ -2,13 +2,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.kit import KitCreate, KitRead, KitUpdate
+from app.schemas.kit import KitCreate, KitRead, KitUpdate, KitOrdersRead
 from app.services.kit_service import (
     create_kit,
     delete_kit,
     get_kit_by_id,
     get_kits,
     update_kit,
+    get_orders_by_kit,
 )
 
 router = APIRouter(prefix="/kits", tags=["kits"])
@@ -67,3 +68,11 @@ def delete_kit_route(
     db: Session = Depends(get_db),
 ):
     return delete_kit(db, kit_id, acting_user_id)
+
+
+@router.get("/{kit_id}/orders", response_model=KitOrdersRead)
+def get_orders_by_kit_route(
+    kit_id: int,
+    db: Session = Depends(get_db),
+):
+    return get_orders_by_kit(db, kit_id)

@@ -31,3 +31,16 @@ class KitRead(BaseModel):
     is_active: bool
 
     model_config = {"from_attributes": True}
+
+
+class KitOrderItem(BaseModel):
+    order_id: int
+    order_name: str
+    allocated_quantity: int
+    order_is_active: bool
+
+
+class KitOrdersRead(BaseModel):
+    kit_id: int
+    kit_name: str
+    orders: list[KitOrderItem]
