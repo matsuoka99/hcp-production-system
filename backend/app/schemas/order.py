@@ -8,7 +8,6 @@ class OrderCreate(BaseModel):
     client_id: int
     product_id: int
     quantity: int = Field(gt=0)
-    created_by_user_id: int
     description: str | None = None
     delivery_date: date
 
