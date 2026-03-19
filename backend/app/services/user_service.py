@@ -12,6 +12,7 @@ from app.utils.permissions import (
     require_assignable_role,
 )
 from app.utils.patch import apply_patch
+from app.utils.cpf import validate_cpf_digits
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -78,12 +79,26 @@ def create_user(db: Session, user_data: UserCreate, acting_user_id: int):
             detail="Nome de usuário já existe."
         )
 
+    normalized_cpf = validate_cpf_digits(user_data.cpf)
+
+    existing_cpf = db.execute(
+        select(User).where(User.cpf == normalized_cpf)
+    ).scalar_one_or_none()
+
+    if existing_cpf:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="CPF já existe."
+        )
+
     # Valida se o usuário logado pode atribuir a role solicitada
     require_assignable_role(db, acting_user_id, user_data.role_id)
 
     user = User(
         username=user_data.username,
         password_hash=hash_password(user_data.password),
+        display_name=user_data.display_name,
+        cpf=normalized_cpf,
         role_id=user_data.role_id,
         is_active=True,
     )
@@ -115,8 +130,60 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
             detail="Nenhum campo enviado para atualização."
         )
 
+    # Normaliza/valida CPF se enviado
+    if "cpf" in update_data:
+        update_data["cpf"] = validate_cpf_digits(update_data["cpf"])
+
+
     # ---------------------------
-    # Caso 1: usuário alterando a si mesmo
+    # Caso 1: master pode alterar tudo
+    # ---------------------------
+    if acting_user.role.code == "master":
+        if "username" in update_data:
+            existing_user = db.execute(
+                select(User).where(
+                    User.username == update_data["username"],
+                    User.id != target_user.id,
+                )
+            ).scalar_one_or_none()
+
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Nome de usuário já existe."
+                )
+
+        if "cpf" in update_data:
+            existing_cpf = db.execute(
+                select(User).where(
+                    User.cpf == update_data["cpf"],
+                    User.id != target_user.id,
+                )
+            ).scalar_one_or_none()
+
+            if existing_cpf:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="CPF já existe."
+                )
+
+        if "role_id" in update_data:
+            require_assignable_role(db, acting_user_id, update_data["role_id"])
+
+        if "new_password" in update_data:
+            update_data["password_hash"] = hash_password(update_data.pop("new_password"))
+
+        # current_password não faz sentido quando outro usuário está alterando a conta
+        update_data.pop("current_password", None)
+
+        apply_patch(target_user, update_data)
+        db.commit()
+        db.refresh(target_user)
+        return target_user
+
+
+    # ---------------------------
+    # Caso 2: usuário alterando a si mesmo
     # Permitido: apenas troca segura de senha
     # ---------------------------
     if acting_user.id == target_user.id:
@@ -145,42 +212,11 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
         db.commit()
         db.refresh(target_user)
         return target_user
-
-    # ---------------------------
-    # Caso 2: master pode alterar tudo
-    # ---------------------------
-    if acting_user.role.code == "master":
-        if "username" in update_data:
-            existing_user = db.execute(
-                select(User).where(
-                    User.username == update_data["username"],
-                    User.id != target_user.id,
-                )
-            ).scalar_one_or_none()
-
-            if existing_user:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Nome de usuário já existe."
-                )
-
-        if "role_id" in update_data:
-            require_assignable_role(db, acting_user_id, update_data["role_id"])
-
-        if "new_password" in update_data:
-            update_data["password_hash"] = hash_password(update_data.pop("new_password"))
-
-        # current_password não faz sentido quando outro usuário está alterando a conta
-        update_data.pop("current_password", None)
-
-        apply_patch(target_user, update_data)
-        db.commit()
-        db.refresh(target_user)
-        return target_user
+    
 
     # ---------------------------
     # Caso 3: supervisor+ pode alterar apenas usuários operator
-    # Permitido: username e new_password
+    # Permitido: username, display_name, cpf e new_password
     # ---------------------------
     require_minimum_role(db, acting_user_id, "supervisor")
 
@@ -193,19 +229,19 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
     # current_password não é necessário quando um supervisor altera outro usuário
     update_data.pop("current_password", None)
 
-    allowed_fields = {"username", "new_password"}
+    allowed_fields = {"username", "display_name", "cpf", "new_password"}
     invalid_fields = set(update_data.keys()) - allowed_fields
 
     if invalid_fields:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Supervisor+ só pode alterar nome de usuário e senha de operators."
+            detail="Supervisor+ só pode alterar username, display_name, cpf e senha de operators."
         )
 
-    if "username" not in update_data and "new_password" not in update_data:
+    if not any(field in update_data for field in allowed_fields):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Informe username ou new_password para atualização."
+            detail="Informe ao menos um campo permitido para atualização."
         )
 
     if "username" in update_data:
@@ -223,6 +259,25 @@ def update_user(db: Session, user_id: int, user_data: UserUpdate, acting_user_id
             )
 
         target_user.username = update_data["username"]
+
+    if "display_name" in update_data:
+        target_user.display_name = update_data["display_name"]
+
+    if "cpf" in update_data:
+        existing_cpf = db.execute(
+            select(User).where(
+                User.cpf == update_data["cpf"],
+                User.id != target_user.id,
+            )
+        ).scalar_one_or_none()
+
+        if existing_cpf:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="CPF já existe."
+            )
+
+        target_user.cpf = update_data["cpf"]
 
     if "new_password" in update_data:
         target_user.password_hash = hash_password(update_data["new_password"])
